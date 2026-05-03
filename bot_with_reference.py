@@ -1,164 +1,113 @@
-import os, json, base64, re, requests, asyncio
+import os, json, base64, re, requests, asyncio, time
 from datetime import datetime
-from groq import Groq
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
-from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, ConversationHandler, CallbackQueryHandler, filters, ContextTypes
+from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, CallbackQueryHandler, filters, ContextTypes
 
 TELEGRAM_TOKEN = "8651518107:AAFtxuF2KZDM4IeuGdf1bVb1_ZV01rcI5lk"
 GROQ_KEY       = "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"
 VERCEL_TOKEN   = os.environ.get("VERCEL_TOKEN", "")
 MY_ID          = 311728841
 
-client = Groq(api_key=GROQ_KEY, timeout=60.0)
-
 STYLE_FILE   = "/tmp/saved_style.txt"
 SITES_FILE   = "/tmp/all_sites.json"
 HISTORY_FILE = "/tmp/site_history.json"
 
-ASK_NAME, ASK_DESC, ASK_SERVICES, ASK_CONTACTS, ASK_COLORS, ASK_EXTRAS, CONFIRM = range(7)
-
-# ─── Шаблоны ─────────────────────────────────────────────────────────────────
 TEMPLATES = {
-    "barber": {
-        "name": "Барбершоп",
-        "photo": "https://images.unsplash.com/photo-1621605815971-fbc98d665033?w=800&q=80",
-        "brief": "Название: [спросить]\nОписание: Премиальный барбершоп. Стрижки, бритьё, уход за бородой.\nУслуги: Стрижка, Бритьё, Оформление бороды, Укладка\nСтиль: тёмный с золотым акцентом, мужской премиальный стиль"
-    },
-    "coffee": {
-        "name": "Кофейня",
-        "photo": "https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?w=800&q=80",
-        "brief": "Название: [спросить]\nОписание: Уютная кофейня с авторскими напитками и десертами.\nУслуги: Эспрессо, Капучино, Авторские напитки, Десерты, Завтраки\nСтиль: тёплый тёмный, коричнево-бежевые акценты"
-    },
-    "studio": {
-        "name": "Музыкальная студия",
-        "photo": "https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?w=800&q=80",
-        "brief": "Название: [спросить]\nОписание: Профессиональная студия звукозаписи.\nУслуги: Запись вокала, Сведение, Мастеринг, Аранжировка\nСтиль: тёмный с фиолетовым градиентом"
-    },
-    "fitness": {
-        "name": "Фитнес / Тренер",
-        "photo": "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=800&q=80",
-        "brief": "Название: [спросить]\nОписание: Персональные тренировки и программы питания.\nУслуги: Персональные тренировки, Онлайн-программы, Консультации по питанию\nСтиль: тёмный с оранжево-красным акцентом, энергичный"
-    },
-    "portfolio": {
-        "name": "Портфолио / Фрилансер",
-        "photo": "https://images.unsplash.com/photo-1467232004584-a241de8bcf5d?w=800&q=80",
-        "brief": "Название: [спросить]\nОписание: Портфолио дизайнера / разработчика / фотографа.\nУслуги: Работы, Обо мне, Услуги, Контакты\nСтиль: минималистичный тёмный с ярким акцентом"
-    },
-    "restaurant": {
-        "name": "Ресторан",
-        "photo": "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&q=80",
-        "brief": "Название: [спросить]\nОписание: Изысканный ресторан с авторской кухней.\nУслуги: Меню, Бронирование, О нас, Галерея\nСтиль: элегантный тёмный с золотым"
-    },
-    "beauty": {
-        "name": "Салон красоты",
-        "photo": "https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80",
-        "brief": "Название: [спросить]\nОписание: Салон красоты полного цикла.\nУслуги: Стрижки, Окрашивание, Маникюр, Макияж, Брови\nСтиль: тёмный с розово-золотым акцентом"
-    },
-    "doctor": {
-        "name": "Врач / Клиника",
-        "photo": "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=800&q=80",
-        "brief": "Название: [спросить]\nОписание: Частная медицинская практика.\nУслуги: Консультации, Диагностика, Лечение, Запись онлайн\nСтиль: чистый тёмно-синий, доверительный профессиональный"
-    },
+    "barber":    {"name": "Барбершоп",          "photo": "https://images.unsplash.com/photo-1621605815971-fbc98d665033?w=800&q=80", "desc": "Премиальный барбершоп. Стрижки, бритьё, уход за бородой.", "services": "Стрижка, Бритьё, Борода, Укладка", "colors": "тёмный с золотым"},
+    "coffee":    {"name": "Кофейня",             "photo": "https://images.unsplash.com/photo-1501339847302-ac426a4a7cbb?w=800&q=80", "desc": "Уютная кофейня с авторскими напитками.", "services": "Эспрессо, Капучино, Авторские напитки, Десерты", "colors": "тёмный тёплый коричневый"},
+    "studio":    {"name": "Музыкальная студия",  "photo": "https://images.unsplash.com/photo-1598488035139-bdbb2231ce04?w=800&q=80", "desc": "Профессиональная студия звукозаписи.", "services": "Запись, Сведение, Мастеринг, Аранжировка", "colors": "тёмный с фиолетовым"},
+    "fitness":   {"name": "Фитнес / Тренер",     "photo": "https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=800&q=80", "desc": "Персональные тренировки.", "services": "Персональные тренировки, Онлайн-программы, Питание", "colors": "тёмный с оранжевым"},
+    "portfolio": {"name": "Портфолио",           "photo": "https://images.unsplash.com/photo-1467232004584-a241de8bcf5d?w=800&q=80", "desc": "Портфолио дизайнера / разработчика.", "services": "Работы, Обо мне, Услуги, Контакты", "colors": "минималистичный тёмный"},
+    "restaurant":{"name": "Ресторан",            "photo": "https://images.unsplash.com/photo-1414235077428-338989a2e8c0?w=800&q=80", "desc": "Изысканный ресторан с авторской кухней.", "services": "Меню, Бронирование, Галерея", "colors": "элегантный тёмный с золотым"},
+    "beauty":    {"name": "Салон красоты",       "photo": "https://images.unsplash.com/photo-1560066984-138dadb4c035?w=800&q=80", "desc": "Салон красоты полного цикла.", "services": "Стрижки, Окрашивание, Маникюр, Макияж", "colors": "тёмный с розово-золотым"},
+    "doctor":    {"name": "Врач / Клиника",      "photo": "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=800&q=80", "desc": "Частная медицинская практика.", "services": "Консультации, Диагностика, Запись онлайн", "colors": "тёмно-синий профессиональный"},
 }
 
-BASE_PROMPT = """Ты веб-дизайнер. Ответ ТОЛЬКО в JSON:
+SYSTEM_PROMPT = """Ты веб-дизайнер. Ответ ТОЛЬКО валидный JSON без markdown:
 {"files":{"index.html":"код"},"summary":"1-2 предложения"}
 
-ВЕСЬ CSS в <style>, ВЕСЬ JS в <script>. CDN:
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+ВЕСЬ CSS в <style>, ВЕСЬ JS в <script>. CDN разрешены.
+Подключи: Inter шрифт от Google Fonts, GSAP от cdnjs.
+Стили: тёмный фон #0a0a0a, белый текст, градиентные акценты.
+Адаптив обязателен: @media(max-width:768px).
+Структура: навбар→hero(100vh, blob, gradient заголовок)→преимущества→услуги→CTA→футер.
+Кнопки рабочие: tel:, mailto:, t.me/, #якоря.
+Картинки: images.unsplash.com по теме."""
 
-СТИЛИ: *{margin:0;padding:0;box-sizing:border-box} body{background:#0a0a0a;color:#fff;font-family:Inter,sans-serif}
-АДАПТИВ: @media(max-width:768px){.grid-3,.grid-2{grid-template-columns:1fr} section{padding:60px 20px} nav .links{display:none}}
-
-СТРУКТУРА: навбар fixed blur(20px) → hero 100vh с blob и gradient заголовком → бегущая строка → 3 карточки преимуществ → услуги → CTA → футер
-BLOB: position:absolute;width:500px;height:500px;border-radius:50%;filter:blur(100px);opacity:0.15;animation:blob 7s infinite
-@keyframes blob{0%,100%{transform:translate(-50%,-50%)scale(1)}50%{transform:translate(-40%,-60%)scale(1.2)}}
-КНОПКИ: href="https://t.me/USERNAME", href="tel:+7...", href="mailto:...", href="#section"
-КАРТИНКИ: https://images.unsplash.com/photo-[релевантный ID]?w=1200&q=80
-FADE-IN: IntersectionObserver на секции"""
-
-SEO_PROMPT = """Добавь SEO оптимизацию в HTML и верни ТОЛЬКО JSON:
-{
-  "files": { "index.html": "полный html с SEO" },
-  "summary": "что добавил"
-}
-
-Добавь в <head>:
-- <title> с названием бизнеса и ключевыми словами
-- <meta name="description"> 150-160 символов
-- <meta name="keywords">
-- Open Graph теги (og:title, og:description, og:image, og:url)
-- <meta name="robots" content="index, follow">
-- <link rel="canonical">
-- Schema.org JSON-LD для LocalBusiness
+EDIT_PROMPT = """Внеси изменения и верни ТОЛЬКО JSON без markdown:
+{"files":{"index.html":"полный html"},"summary":"что изменил"}
 Верни ПОЛНЫЙ файл."""
 
-EDIT_PROMPT = """Внеси изменения в HTML и верни ТОЛЬКО JSON:
-{
-  "files": { "index.html": "полный обновлённый html" },
-  "summary": "что изменил"
-}
-Сохраняй весь дизайн, меняй только запрошенное. Верни ПОЛНЫЙ файл."""
+ADD_PROMPT = """Добавь раздел и верни ТОЛЬКО JSON без markdown:
+{"files":{"index.html":"полный html с новым разделом"},"summary":"что добавил"}
+Верни ПОЛНЫЙ файл."""
 
-ADDBLOCK_PROMPT = """Добавь новый раздел в HTML и верни ТОЛЬКО JSON:
-{
-  "files": { "index.html": "полный html с новым разделом" },
-  "summary": "что добавил"
-}
-Стиль раздела должен совпадать с остальным сайтом. Добавь ссылку в навбар. Верни ПОЛНЫЙ файл."""
-
-STYLE_ADDON = "\n\nСОХРАНЁННЫЙ СТИЛЬ (применяй строго):\n{style_description}"
+SEO_PROMPT = """Добавь SEO теги и верни ТОЛЬКО JSON без markdown:
+{"files":{"index.html":"полный html с seo"},"summary":"что добавил"}
+Добавь: title, meta description, og теги, schema.org. Верни ПОЛНЫЙ файл."""
 
 
-# ─── Утилиты ─────────────────────────────────────────────────────────────────
+# ─── Groq API ─────────────────────────────────────────────────────────────────
 
-def load_style() -> str | None:
+def groq_call(messages: list, model="llama-3.1-8b-instant", max_tokens=6000) -> str:
+    resp = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+        json={"model": model, "max_tokens": max_tokens, "messages": messages},
+        timeout=55
+    )
+    resp.raise_for_status()
+    return resp.json()["choices"][0]["message"]["content"]
+
+
+# ─── Утилиты ──────────────────────────────────────────────────────────────────
+
+def load_style():
     try: return open(STYLE_FILE).read().strip() if os.path.exists(STYLE_FILE) else None
     except: return None
 
 def save_style(d): open(STYLE_FILE, "w").write(d)
 
-def load_sites() -> list:
+def load_sites():
     try: return json.load(open(SITES_FILE)) if os.path.exists(SITES_FILE) else []
     except: return []
 
-def save_site_to_list(name: str, url: str):
+def save_site(name, url):
     sites = load_sites()
     sites.append({"name": name, "url": url, "date": datetime.now().strftime("%d.%m.%Y %H:%M")})
     json.dump(sites[-20:], open(SITES_FILE, "w"), ensure_ascii=False)
 
-def load_history() -> list:
+def load_history():
     try: return json.load(open(HISTORY_FILE)) if os.path.exists(HISTORY_FILE) else []
     except: return []
 
-def push_history(files: dict, url: str, name: str = ""):
-    history = load_history()
-    history.append({"files": files, "url": url, "name": name, "date": datetime.now().strftime("%d.%m.%Y %H:%M")})
-    json.dump(history[-5:], open(HISTORY_FILE, "w"), ensure_ascii=False)
+def push_history(files, url, name=""):
+    h = load_history()
+    h.append({"files": files, "url": url, "name": name, "date": datetime.now().strftime("%d.%m.%Y %H:%M")})
+    json.dump(h[-5:], open(HISTORY_FILE, "w"), ensure_ascii=False)
 
-def pop_history() -> dict | None:
-    history = load_history()
-    if len(history) < 2: return None
-    history.pop()
-    json.dump(history, open(HISTORY_FILE, "w"), ensure_ascii=False)
-    return history[-1] if history else None
+def pop_history():
+    h = load_history()
+    if len(h) < 2: return None
+    h.pop()
+    json.dump(h, open(HISTORY_FILE, "w"), ensure_ascii=False)
+    return h[-1]
 
-def current_site() -> dict | None:
-    history = load_history()
-    return history[-1] if history else None
+def current_site():
+    h = load_history()
+    return h[-1] if h else None
 
-def build_prompt() -> str:
-    style = load_style()
-    return BASE_PROMPT + (STYLE_ADDON.format(style_description=style) if style else "")
-
-def parse_response(raw: str) -> tuple[dict, str]:
-    raw = re.sub(r"^```(?:json)?\s*", "", raw.strip())
+def parse_json(raw):
+    raw = raw.strip()
+    raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
+    # Find JSON object
+    start = raw.find("{")
+    if start > 0: raw = raw[start:]
     data = json.loads(raw)
     return data.get("files", {}), data.get("summary", "Готово!")
 
-def deploy(files: dict) -> str:
+def deploy(files):
     vfiles = [{"file": n, "data": base64.b64encode(c.encode()).decode(), "encoding": "base64"} for n,c in files.items()]
     r = requests.post(
         "https://api.vercel.com/v13/deployments",
@@ -170,448 +119,377 @@ def deploy(files: dict) -> str:
     url = r.json().get("url", "")
     return ("https://" + url) if not url.startswith("http") else url
 
-def get_qr_url(site_url: str) -> str:
-    return f"https://api.qrserver.com/v1/create-qr-code/?size=400x400&data={site_url}&bgcolor=0a0a0a&color=ffffff&margin=20"
+def qr(url): return f"https://api.qrserver.com/v1/create-qr-code/?size=400x400&data={url}&bgcolor=0a0a0a&color=ffffff&margin=20"
 
-def analyze_style(b64: str) -> str:
-    raw_style = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-        json={"model": "meta-llama/llama-4-scout-17b-16e-instruct", "max_tokens": 1000,
-              "messages": [
-                  {"role": "system", "content": "Опиши визуальный стиль сайта: цвета (hex), шрифты, отступы, кнопки, карточки, анимации."},
-                  {"role": "user", "content": [
-                      {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                      {"type": "text", "text": "Опиши стиль детально."}
-                  ]}
-              ]},
-        timeout=60
-    ).json()["choices"][0]["message"]["content"]
-    return raw_style.strip()
+def build_system():
+    style = load_style()
+    if style:
+        return SYSTEM_PROMPT + f"\n\nСТИЛЬ ПОЛЬЗОВАТЕЛЯ (применяй строго):\n{style}"
+    return SYSTEM_PROMPT
 
-def build_brief(data: dict) -> str:
-    template_context = ""
-    if data.get("template_brief"):
-        template_context = f"\nШАБЛОН: {data['template_brief']}\n"
-    return f"""{template_context}
-Создай лендинг:
-Название: {data.get('name', '')}
-Описание: {data.get('desc', '')}
-Услуги: {data.get('services', '')}
-Контакты: {data.get('contacts', '')}
-Цвета: {data.get('colors', 'тёмная премиальная')}
-Дополнительно: {data.get('extras', 'нет')}
-
-Используй эти данные везде. Не оставляй заглушки типа [название]."""
-
-
-# ─── Главное меню (inline кнопки) ────────────────────────────────────────────
-
-def main_menu_keyboard():
+def main_menu():
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🌐 Создать сайт", callback_data="menu_new"),
-         InlineKeyboardButton("🎨 Шаблоны", callback_data="menu_templates")],
-        [InlineKeyboardButton("✏️ Редактировать", callback_data="menu_edit"),
-         InlineKeyboardButton("➕ Добавить раздел", callback_data="menu_addblock")],
-        [InlineKeyboardButton("🔍 SEO", callback_data="menu_seo"),
-         InlineKeyboardButton("📱 QR-код", callback_data="menu_qr")],
-        [InlineKeyboardButton("↩️ Отменить изменение", callback_data="menu_undo"),
-         InlineKeyboardButton("📋 Мои сайты", callback_data="menu_list")],
-        [InlineKeyboardButton("🎭 Стиль по скриншоту", callback_data="menu_setstyle"),
-         InlineKeyboardButton("🗑 Сбросить стиль", callback_data="menu_clearstyle")],
+        [InlineKeyboardButton("🌐 Новый сайт", callback_data="new"),
+         InlineKeyboardButton("🎨 Шаблоны", callback_data="templates")],
+        [InlineKeyboardButton("✏️ Редактировать", callback_data="edit"),
+         InlineKeyboardButton("➕ Добавить раздел", callback_data="addblock")],
+        [InlineKeyboardButton("🔍 SEO", callback_data="seo"),
+         InlineKeyboardButton("📱 QR-код", callback_data="qr")],
+        [InlineKeyboardButton("↩️ Отменить изменение", callback_data="undo"),
+         InlineKeyboardButton("📋 Мои сайты", callback_data="list")],
+        [InlineKeyboardButton("🎭 Сохранить стиль", callback_data="setstyle"),
+         InlineKeyboardButton("🗑 Сбросить стиль", callback_data="clearstyle")],
     ])
 
-def templates_keyboard():
-    buttons = []
-    row = []
-    for key, t in TEMPLATES.items():
-        row.append(InlineKeyboardButton(t["name"], callback_data=f"tpl_{key}"))
-        if len(row) == 2:
-            buttons.append(row)
-            row = []
-    if row: buttons.append(row)
-    buttons.append([InlineKeyboardButton("◀️ Назад", callback_data="menu_back")])
-    return InlineKeyboardMarkup(buttons)
+def templates_menu():
+    rows = []
+    items = list(TEMPLATES.items())
+    for i in range(0, len(items), 2):
+        row = [InlineKeyboardButton(items[i][1]["name"], callback_data=f"tpl_{items[i][0]}")]
+        if i+1 < len(items):
+            row.append(InlineKeyboardButton(items[i+1][1]["name"], callback_data=f"tpl_{items[i+1][0]}"))
+        rows.append(row)
+    rows.append([InlineKeyboardButton("◀️ Назад", callback_data="back")])
+    return InlineKeyboardMarkup(rows)
+
+# Состояния пользователя
+# user_data["state"]: None | "new_q1".."new_q6" | "new_confirm" | "edit" | "addblock" | "setstyle"
+# user_data["brief"]: dict с данными для создания
+
+QUESTIONS = [
+    ("new_q1", "1️⃣ Как называется твой бизнес/проект?"),
+    ("new_q2", "2️⃣ Опиши чем занимаешься (1-2 предложения):"),
+    ("new_q3", "3️⃣ Перечисли услуги через запятую:"),
+    ("new_q4", "4️⃣ Контакты — Telegram, телефон, email:"),
+    ("new_q5", "5️⃣ Выбери стиль:"),
+    ("new_q6", "6️⃣ Что добавить? (или напиши «нет»)\nПример: цены, отзывы, портфолио"),
+]
+Q_KEYS = ["name", "desc", "services", "contacts", "colors", "extras"]
+
+COLORS_KB = ReplyKeyboardMarkup([
+    ["🖤 Тёмный с фиолетовым", "🖤 Тёмный с золотым"],
+    ["🖤 Тёмный с синим", "🤍 Светлый минимализм"],
+], one_time_keyboard=True, resize_keyboard=True)
 
 
-# ─── Handlers ────────────────────────────────────────────────────────────────
+async def do_generate(status, name, brief_text, update=None):
+    """Вызывает Groq и деплоит. Возвращает url или None."""
+    try:
+        def call():
+            return groq_call([
+                {"role": "system", "content": build_system()},
+                {"role": "user", "content": brief_text}
+            ])
+        raw = await asyncio.wait_for(asyncio.to_thread(call), timeout=65)
+        files, summary = parse_json(raw)
+        if not files:
+            await status.edit_text("❌ ИИ не вернул файлы. Попробуй ещё раз.", reply_markup=main_menu())
+            return None
+        await status.edit_text("🚀 Деплою на Vercel...")
+        url = await asyncio.to_thread(deploy, files)
+        push_history(files, url, name)
+        save_site(name, url)
+        await status.edit_text(f"✅ Готово!\n\n🌐 {url}\n\n📝 {summary}", reply_markup=main_menu())
+        if update:
+            await update.message.reply_photo(photo=qr(url), caption="📱 QR-код твоего сайта")
+        return url
+    except asyncio.TimeoutError:
+        await status.edit_text("❌ ИИ не ответил (таймаут 65 сек). Попробуй ещё раз.", reply_markup=main_menu())
+    except requests.HTTPError as e:
+        await status.edit_text(f"❌ Groq HTTP ошибка: {e.response.status_code}\n{e.response.text[:150]}", reply_markup=main_menu())
+    except json.JSONDecodeError:
+        await status.edit_text("❌ ИИ вернул неверный формат. Попробуй ещё раз.", reply_markup=main_menu())
+    except Exception as e:
+        await status.edit_text(f"❌ Ошибка: {type(e).__name__}: {str(e)[:200]}", reply_markup=main_menu())
+    return None
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != MY_ID:
-        await update.message.reply_text("⛔ Нет доступа.")
-        return
+
+# ─── Handlers ─────────────────────────────────────────────────────────────────
+
+async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MY_ID: return
+    context.user_data["state"] = None
     style = load_style()
     site  = current_site()
-    text = (
-        "👋 Привет! Создаю премиальные сайты.\n\n"
-        + ("✅ Стиль сохранён\n" if style else "⚪ Стиль не задан\n")
-        + (f"🌐 Последний: {site['url']}\n" if site else "⚪ Сайтов ещё нет\n")
-        + "\nВыбери действие:"
-    )
-    await update.message.reply_text(text, reply_markup=main_menu_keyboard())
+    text  = ("👋 Привет! Создаю премиальные сайты.\n\n"
+             + ("✅ Стиль сохранён\n" if style else "⚪ Стиль не задан\n")
+             + (f"🌐 Последний: {site['url']}\n" if site else "⚪ Сайтов ещё нет\n")
+             + "\nВыбери действие:")
+    await update.message.reply_text(text, reply_markup=main_menu())
 
-
-async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-
-    if data == "menu_back":
-        await query.edit_message_text("Выбери действие:", reply_markup=main_menu_keyboard())
-
-    elif data == "menu_new":
-        await query.edit_message_text("🌐 Создаём сайт!\n\n1️⃣ Как называется твой бизнес?")
-        context.user_data["brief"] = {}
-        context.user_data["conv_state"] = ASK_NAME
-
-    elif data == "menu_templates":
-        await query.edit_message_text("🎨 Выбери шаблон:", reply_markup=templates_keyboard())
-
-    elif data.startswith("tpl_"):
-        key = data[4:]
-        tpl = TEMPLATES.get(key)
-        if not tpl: return
-        await query.message.reply_photo(
-            photo=tpl["photo"],
-            caption=f"*{tpl['name']}*\n\nКак называется твой бизнес?",
-            parse_mode="Markdown"
+async def cmd_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MY_ID: return
+    status = await update.message.reply_text("🔍 Тестирую Groq API...")
+    try:
+        t0 = time.time()
+        answer = await asyncio.wait_for(
+            asyncio.to_thread(groq_call, [{"role": "user", "content": "Reply with just: WORKS"}], "llama-3.1-8b-instant", 20),
+            timeout=30
         )
-        context.user_data["brief"] = {"template_brief": tpl["brief"]}
-        context.user_data["conv_state"] = ASK_NAME
+        elapsed = round(time.time() - t0, 1)
+        await status.edit_text(f"✅ Groq работает! ({elapsed}с)\nОтвет: {answer.strip()}")
+    except asyncio.TimeoutError:
+        await status.edit_text("❌ Groq не ответил за 30с — проблема с сетью/ключом")
+    except requests.HTTPError as e:
+        await status.edit_text(f"❌ HTTP {e.response.status_code}: {e.response.text[:200]}")
+    except Exception as e:
+        await status.edit_text(f"❌ {type(e).__name__}: {str(e)[:200]}")
 
-    elif data == "menu_edit":
+async def btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MY_ID: return
+    q = update.callback_query
+    await q.answer()
+    d = q.data
+
+    if d == "back":
+        await q.edit_message_text("Выбери действие:", reply_markup=main_menu())
+
+    elif d == "new":
+        context.user_data.update({"state": "new_q1", "brief": {}})
+        await q.edit_message_text(QUESTIONS[0][1])
+
+    elif d == "templates":
+        await q.edit_message_text("🎨 Выбери шаблон:", reply_markup=templates_menu())
+
+    elif d.startswith("tpl_"):
+        key = d[4:]
+        tpl = TEMPLATES.get(key, {})
+        context.user_data.update({
+            "state": "new_q1",
+            "brief": {"desc": tpl.get("desc",""), "services": tpl.get("services",""), "colors": tpl.get("colors","")},
+            "tpl_name": tpl.get("name","")
+        })
+        await q.message.reply_photo(photo=tpl["photo"], caption=f"*{tpl['name']}*\n\n1️⃣ Как называется твой бизнес?", parse_mode="Markdown")
+
+    elif d == "edit":
         site = current_site()
         if not site:
-            await query.edit_message_text("⚪ Нет сохранённого сайта. Сначала создай через меню.", reply_markup=main_menu_keyboard())
+            await q.edit_message_text("⚪ Нет сайта. Сначала создай через меню.", reply_markup=main_menu())
             return
-        await query.edit_message_text("✏️ Напиши что изменить (одним сообщением):\n\nПример: измени цвет кнопок на золотой")
-        context.user_data["action"] = "edit"
+        context.user_data["state"] = "edit"
+        await q.edit_message_text("✏️ Напиши что изменить:\n\nПример: измени цвет кнопок на золотой")
 
-    elif data == "menu_addblock":
+    elif d == "addblock":
         site = current_site()
         if not site:
-            await query.edit_message_text("⚪ Нет сайта. Сначала создай через меню.", reply_markup=main_menu_keyboard())
+            await q.edit_message_text("⚪ Нет сайта.", reply_markup=main_menu())
             return
-        await query.edit_message_text("➕ Напиши какой раздел добавить:\n\nПример: секция с отзывами\nПример: блок с ценами")
-        context.user_data["action"] = "addblock"
+        context.user_data["state"] = "addblock"
+        await q.edit_message_text("➕ Напиши какой раздел добавить:\n\nПример: секция с отзывами")
 
-    elif data == "menu_seo":
+    elif d == "seo":
         site = current_site()
         if not site:
-            await query.edit_message_text("⚪ Нет сайта.", reply_markup=main_menu_keyboard())
+            await q.edit_message_text("⚪ Нет сайта.", reply_markup=main_menu())
             return
-        msg = await query.edit_message_text("🔍 Добавляю SEO оптимизацию...")
+        msg = await q.edit_message_text("🔍 Добавляю SEO...")
         try:
             html = site["files"].get("index.html", "")
-            raw_seo = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-                json={"model": "llama-3.1-8b-instant", "max_tokens": 6000,
-                      "messages": [{"role": "system", "content": SEO_PROMPT}, {"role": "user", "content": f"HTML:\n{html}"}]},
-                timeout=60
-            ).json()["choices"][0]["message"]["content"]
-            files, summary = parse_response(raw_seo)
-            url = deploy(files)
-            push_history(files, url, site.get("name", ""))
-            save_site_to_list(site.get("name", "сайт"), url)
-            await msg.edit_text(f"✅ SEO добавлен!\n\n🌐 {url}\n\n📝 {summary}", reply_markup=main_menu_keyboard())
+            def call():
+                return groq_call([{"role": "system", "content": SEO_PROMPT}, {"role": "user", "content": f"HTML:\n{html}"}])
+            raw = await asyncio.wait_for(asyncio.to_thread(call), timeout=65)
+            files, summary = parse_json(raw)
+            url = await asyncio.to_thread(deploy, files)
+            push_history(files, url, site.get("name",""))
+            save_site(site.get("name",""), url)
+            await msg.edit_text(f"✅ SEO добавлен!\n\n🌐 {url}\n\n📝 {summary}", reply_markup=main_menu())
         except Exception as e:
-            await msg.edit_text(f"❌ Ошибка: {e}", reply_markup=main_menu_keyboard())
+            await msg.edit_text(f"❌ Ошибка: {str(e)[:200]}", reply_markup=main_menu())
 
-    elif data == "menu_qr":
+    elif d == "qr":
         site = current_site()
         if not site:
-            await query.edit_message_text("⚪ Нет сайта.", reply_markup=main_menu_keyboard())
+            await q.edit_message_text("⚪ Нет сайта.", reply_markup=main_menu())
             return
-        qr_url = get_qr_url(site["url"])
-        await query.message.reply_photo(
-            photo=qr_url,
-            caption=f"📱 QR-код для:\n{site['url']}\n\nРаспечатай и размести где нужно!"
-        )
-        await query.edit_message_text("Выбери действие:", reply_markup=main_menu_keyboard())
+        await q.message.reply_photo(photo=qr(site["url"]), caption=f"📱 QR-код:\n{site['url']}")
+        await q.edit_message_text("Выбери действие:", reply_markup=main_menu())
 
-    elif data == "menu_undo":
+    elif d == "undo":
         prev = pop_history()
         if not prev:
-            await query.edit_message_text("⚪ Нет предыдущей версии.", reply_markup=main_menu_keyboard())
+            await q.edit_message_text("⚪ Нет предыдущей версии.", reply_markup=main_menu())
             return
-        msg = await query.edit_message_text("↩️ Откатываю к предыдущей версии...")
+        msg = await q.edit_message_text("↩️ Откатываю...")
         try:
-            url = deploy(prev["files"])
-            await msg.edit_text(f"✅ Откатил!\n\n🌐 {url}", reply_markup=main_menu_keyboard())
+            url = await asyncio.to_thread(deploy, prev["files"])
+            await msg.edit_text(f"✅ Откатил!\n\n🌐 {url}", reply_markup=main_menu())
         except Exception as e:
-            await msg.edit_text(f"❌ Ошибка: {e}", reply_markup=main_menu_keyboard())
+            await msg.edit_text(f"❌ Ошибка: {str(e)[:200]}", reply_markup=main_menu())
 
-    elif data == "menu_list":
+    elif d == "list":
         sites = load_sites()
         if not sites:
-            await query.edit_message_text("⚪ Сайтов ещё нет.", reply_markup=main_menu_keyboard())
+            await q.edit_message_text("⚪ Сайтов ещё нет.", reply_markup=main_menu())
             return
-        text = "📋 Все твои сайты:\n\n"
-        for i, s in enumerate(reversed(sites[-10:]), 1):
-            text += f"{i}. {s.get('name', 'Сайт')} — {s['date']}\n🌐 {s['url']}\n\n"
-        await query.edit_message_text(text, reply_markup=main_menu_keyboard())
+        text = "📋 Твои сайты:\n\n"
+        for s in reversed(sites[-10:]):
+            text += f"• {s.get('name','Сайт')} ({s['date']})\n  {s['url']}\n\n"
+        await q.edit_message_text(text, reply_markup=main_menu())
 
-    elif data == "menu_setstyle":
-        await query.edit_message_text("📸 Отправь скриншот сайта — запомню стиль навсегда.")
-        context.user_data["waiting_for_style"] = True
+    elif d == "setstyle":
+        context.user_data["state"] = "setstyle"
+        await q.edit_message_text("📸 Отправь скриншот сайта — запомню стиль навсегда.")
 
-    elif data == "menu_clearstyle":
+    elif d == "clearstyle":
         if os.path.exists(STYLE_FILE): os.remove(STYLE_FILE)
-        await query.edit_message_text("🗑 Стиль сброшен.", reply_markup=main_menu_keyboard())
+        context.user_data["state"] = None
+        await q.edit_message_text("🗑 Стиль сброшен.", reply_markup=main_menu())
 
+    # Подтверждение брифа
+    elif d == "confirm_yes":
+        b = context.user_data.get("brief", {})
+        name = b.get("name", "Сайт")
+        brief_text = (f"Создай лендинг:\nНазвание: {name}\nОписание: {b.get('desc','')}\n"
+                      f"Услуги: {b.get('services','')}\nКонтакты: {b.get('contacts','')}\n"
+                      f"Стиль: {b.get('colors','тёмный премиальный')}\nДоп: {b.get('extras','нет')}\n"
+                      f"Не оставляй заглушки — используй реальные данные везде.")
+        context.user_data["state"] = None
+        msg = await q.edit_message_text("🤖 Генерирую сайт (~20 сек)...")
+        await do_generate(msg, name, brief_text, update)
 
-# ─── Текстовые сообщения (диалог и действия) ─────────────────────────────────
+    elif d == "confirm_no":
+        context.user_data.update({"state": "new_q1", "brief": {}})
+        await q.edit_message_text(QUESTIONS[0][1])
+
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != MY_ID:
-        await update.message.reply_text("⛔ Нет доступа.")
-        return
-
+    if update.effective_user.id != MY_ID: return
     text  = update.message.text.strip()
-    state = context.user_data.get("conv_state")
-    action= context.user_data.get("action")
+    state = context.user_data.get("state")
 
     # Диалог создания сайта
-    if state == ASK_NAME:
-        context.user_data["brief"]["name"] = text
-        context.user_data["conv_state"] = ASK_DESC
-        await update.message.reply_text("2️⃣ Опиши чем занимаешься (1-2 предложения):")
+    if state and state.startswith("new_q"):
+        step = int(state[-1]) - 1  # 0..5
+        key  = Q_KEYS[step]
+
+        # Сохраняем ответ (если шаблон уже заполнил это поле — не перезаписываем если не нужно)
+        context.user_data["brief"][key] = text
+
+        if step < 5:
+            next_state = f"new_q{step+2}"
+            context.user_data["state"] = next_state
+            _, question = QUESTIONS[step+1]
+            if next_state == "new_q5":
+                await update.message.reply_text(question, reply_markup=COLORS_KB)
+            else:
+                await update.message.reply_text(question, reply_markup=ReplyKeyboardRemove())
+        else:
+            # Все вопросы заданы — показываем бриф
+            context.user_data["state"] = "confirm"
+            b = context.user_data["brief"]
+            confirm_kb = InlineKeyboardMarkup([[
+                InlineKeyboardButton("✅ Создавай!", callback_data="confirm_yes"),
+                InlineKeyboardButton("❌ Заново", callback_data="confirm_no")
+            ]])
+            await update.message.reply_text(
+                f"✅ Проверь данные:\n\n"
+                f"🏷 {b.get('name')}\n📝 {b.get('desc')}\n⚡ {b.get('services')}\n"
+                f"📞 {b.get('contacts')}\n🎨 {b.get('colors')}\n➕ {b.get('extras')}\n\nВсё верно?",
+                reply_markup=confirm_kb
+            )
         return
 
-    if state == ASK_DESC:
-        context.user_data["brief"]["desc"] = text
-        context.user_data["conv_state"] = ASK_SERVICES
-        await update.message.reply_text("3️⃣ Перечисли услуги через запятую:")
-        return
-
-    if state == ASK_SERVICES:
-        context.user_data["brief"]["services"] = text
-        context.user_data["conv_state"] = ASK_CONTACTS
-        await update.message.reply_text("4️⃣ Контакты — Telegram, телефон, email (что есть):")
-        return
-
-    if state == ASK_CONTACTS:
-        context.user_data["brief"]["contacts"] = text
-        context.user_data["conv_state"] = ASK_COLORS
-        await update.message.reply_text(
-            "5️⃣ Стиль сайта:",
-            reply_markup=ReplyKeyboardMarkup([
-                ["🖤 Тёмный с фиолетовым"],
-                ["🖤 Тёмный с золотым"],
-                ["🖤 Тёмный с синим"],
-                ["🤍 Светлый минимализм"],
-                ["✍️ Напишу сам"]
-            ], one_time_keyboard=True, resize_keyboard=True)
-        )
-        return
-
-    if state == ASK_COLORS:
-        context.user_data["brief"]["colors"] = text
-        context.user_data["conv_state"] = ASK_EXTRAS
-        await update.message.reply_text(
-            "6️⃣ Что добавить? (или «нет»)\nПример: цены, портфолио, отзывы, FAQ",
-            reply_markup=ReplyKeyboardRemove()
-        )
-        return
-
-    if state == ASK_EXTRAS:
-        context.user_data["brief"]["extras"] = text
-        context.user_data["conv_state"] = CONFIRM
-        b = context.user_data["brief"]
-        await update.message.reply_text(
-            f"✅ Проверь данные:\n\n"
-            f"🏷 {b.get('name')}\n"
-            f"📝 {b.get('desc')}\n"
-            f"⚡ {b.get('services')}\n"
-            f"📞 {b.get('contacts')}\n"
-            f"🎨 {b.get('colors')}\n"
-            f"➕ {b.get('extras')}\n\nВсё верно?",
-            reply_markup=ReplyKeyboardMarkup([["✅ Да, создавай!", "❌ Начать заново"]], one_time_keyboard=True, resize_keyboard=True)
-        )
-        return
-
-    if state == CONFIRM:
-        if "заново" in text.lower():
-            context.user_data["brief"] = {}
-            context.user_data["conv_state"] = ASK_NAME
-            await update.message.reply_text("Хорошо! Как называется бизнес?", reply_markup=ReplyKeyboardRemove())
-            return
-        context.user_data["conv_state"] = None
-        status = await update.message.reply_text("🤖 Создаю сайт...", reply_markup=ReplyKeyboardRemove())
-        try:
-            brief_text = build_brief(context.user_data["brief"])
-            await status.edit_text("🤖 Groq пишет код... (~30 сек)")
-
-            def call_groq():
-                resp = requests.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-                    json={"model": "llama-3.1-8b-instant", "max_tokens": 6000,
-                          "messages": [{"role": "system", "content": build_prompt()}, {"role": "user", "content": brief_text}]},
-                    timeout=60
-                )
-                resp.raise_for_status()
-                return resp.json()["choices"][0]["message"]["content"]
-
-            try:
-                raw = await asyncio.wait_for(asyncio.to_thread(call_groq), timeout=70)
-            except asyncio.TimeoutError:
-                await status.edit_text("❌ Groq не ответил за 70 сек. Попробуй ещё раз.", reply_markup=main_menu_keyboard())
-                return
-            except requests.RequestException as req_err:
-                await status.edit_text(f"❌ Сетевая ошибка: {str(req_err)[:150]}", reply_markup=main_menu_keyboard())
-                return
-            await status.edit_text("🔧 Обрабатываю код...")
-
-            try:
-                files, summary = parse_response(raw)
-            except Exception as parse_err:
-                await status.edit_text(f"❌ Ошибка парсинга: {str(parse_err)[:150]}\n\nПопробуй ещё раз.", reply_markup=main_menu_keyboard())
-                return
-
-            if not files:
-                await status.edit_text("❌ Groq не вернул файлы. Попробуй ещё раз.", reply_markup=main_menu_keyboard())
-                return
-
-            await status.edit_text("🚀 Деплою на Vercel...")
-            url = deploy(files)
-            name = context.user_data["brief"].get("name", "Сайт")
-            push_history(files, url, name)
-            save_site_to_list(name, url)
-            qr_url = get_qr_url(url)
-            await status.edit_text(f"✅ Готово!\n\n🌐 {url}\n\n📝 {summary}", reply_markup=main_menu_keyboard())
-            await update.message.reply_photo(photo=qr_url, caption="📱 QR-код твоего сайта")
-        except Exception as e:
-            await status.edit_text(f"❌ Ошибка: {str(e)[:300]}", reply_markup=main_menu_keyboard())
-        return
-
-    # Действия edit/addblock
-    if action == "edit":
-        context.user_data["action"] = None
+    if state == "edit":
+        context.user_data["state"] = None
         site = current_site()
         if not site:
-            await update.message.reply_text("⚪ Нет сайта.", reply_markup=main_menu_keyboard())
+            await update.message.reply_text("⚪ Нет сайта.", reply_markup=main_menu())
             return
         status = await update.message.reply_text("✏️ Вношу изменения...")
         try:
-            html = site["files"].get("index.html", "")
-            raw_edit = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-                json={"model": "llama-3.1-8b-instant", "max_tokens": 6000,
-                      "messages": [{"role": "system", "content": EDIT_PROMPT}, {"role": "user", "content": f"HTML:\n{html}\n\nЧТО ИЗМЕНИТЬ: {text}"}]},
-                timeout=60
-            ).json()["choices"][0]["message"]["content"]
-            files, summary = parse_response(raw_edit)
-            url = deploy(files)
-            push_history(files, url, site.get("name", ""))
-            save_site_to_list(site.get("name", ""), url)
-            await status.edit_text(f"✅ Готово!\n\n🌐 {url}\n\n📝 {summary}", reply_markup=main_menu_keyboard())
+            html = site["files"].get("index.html","")
+            def call():
+                return groq_call([
+                    {"role": "system", "content": EDIT_PROMPT},
+                    {"role": "user", "content": f"HTML:\n{html}\n\nЧТО ИЗМЕНИТЬ: {text}"}
+                ])
+            raw = await asyncio.wait_for(asyncio.to_thread(call), timeout=65)
+            files, summary = parse_json(raw)
+            url = await asyncio.to_thread(deploy, files)
+            push_history(files, url, site.get("name",""))
+            save_site(site.get("name",""), url)
+            await status.edit_text(f"✅ Готово!\n\n🌐 {url}\n\n📝 {summary}", reply_markup=main_menu())
         except Exception as e:
-            await status.edit_text(f"❌ Ошибка: {e}", reply_markup=main_menu_keyboard())
+            await status.edit_text(f"❌ Ошибка: {type(e).__name__}: {str(e)[:200]}", reply_markup=main_menu())
         return
 
-    if action == "addblock":
-        context.user_data["action"] = None
+    if state == "addblock":
+        context.user_data["state"] = None
         site = current_site()
         if not site:
-            await update.message.reply_text("⚪ Нет сайта.", reply_markup=main_menu_keyboard())
+            await update.message.reply_text("⚪ Нет сайта.", reply_markup=main_menu())
             return
         status = await update.message.reply_text("➕ Добавляю раздел...")
         try:
-            html = site["files"].get("index.html", "")
-            raw_add = requests.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-                json={"model": "llama-3.1-8b-instant", "max_tokens": 6000,
-                      "messages": [{"role": "system", "content": ADDBLOCK_PROMPT}, {"role": "user", "content": f"HTML:\n{html}\n\nДОБАВИТЬ: {text}"}]},
-                timeout=60
-            ).json()["choices"][0]["message"]["content"]
-            files, summary = parse_response(raw_add)
-            url = deploy(files)
-            push_history(files, url, site.get("name", ""))
-            save_site_to_list(site.get("name", ""), url)
-            await status.edit_text(f"✅ Готово!\n\n🌐 {url}\n\n📝 {summary}", reply_markup=main_menu_keyboard())
+            html = site["files"].get("index.html","")
+            def call():
+                return groq_call([
+                    {"role": "system", "content": ADD_PROMPT},
+                    {"role": "user", "content": f"HTML:\n{html}\n\nДОБАВИТЬ РАЗДЕЛ: {text}"}
+                ])
+            raw = await asyncio.wait_for(asyncio.to_thread(call), timeout=65)
+            files, summary = parse_json(raw)
+            url = await asyncio.to_thread(deploy, files)
+            push_history(files, url, site.get("name",""))
+            save_site(site.get("name",""), url)
+            await status.edit_text(f"✅ Готово!\n\n🌐 {url}\n\n📝 {summary}", reply_markup=main_menu())
         except Exception as e:
-            await status.edit_text(f"❌ Ошибка: {e}", reply_markup=main_menu_keyboard())
+            await status.edit_text(f"❌ Ошибка: {type(e).__name__}: {str(e)[:200]}", reply_markup=main_menu())
         return
 
-    # Если ничего не ожидается — показываем меню
-    await update.message.reply_text("Выбери действие:", reply_markup=main_menu_keyboard())
+    # Без состояния — показываем меню
+    await update.message.reply_text("Выбери действие:", reply_markup=main_menu())
 
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != MY_ID:
-        await update.message.reply_text("⛔ Нет доступа.")
+    if update.effective_user.id != MY_ID: return
+    if context.user_data.get("state") != "setstyle":
+        await update.message.reply_text("Чтобы сохранить стиль — нажми «Сохранить стиль» в меню /start")
         return
+    context.user_data["state"] = None
     photo = update.message.photo[-1]
     f     = await context.bot.get_file(photo.file_id)
     data  = await f.download_as_bytearray()
     b64   = base64.b64encode(bytes(data)).decode()
-
-    if context.user_data.get("waiting_for_style"):
-        context.user_data["waiting_for_style"] = False
-        status = await update.message.reply_text("🔍 Анализирую стиль...")
-        try:
-            save_style(analyze_style(b64))
-            await status.edit_text("✅ Стиль сохранён! Все сайты теперь в этом стиле.", reply_markup=main_menu_keyboard())
-        except Exception as e:
-            await status.edit_text(f"❌ Ошибка: {e}")
-        return
-
-    await update.message.reply_text("Чтобы сохранить стиль — нажми «Стиль по скриншоту» в меню /start", reply_markup=main_menu_keyboard())
-
-
-async def test_groq(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != MY_ID:
-        return
-    status = await update.message.reply_text("🔍 Тестирую Groq API...")
+    status = await update.message.reply_text("🔍 Анализирую стиль...")
     try:
-        import time
-        t0 = time.time()
-        resp = requests.post(
-            "https://api.groq.com/openai/v1/chat/completions",
-            headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-            json={"model": "llama-3.1-8b-instant", "max_tokens": 50,
-                  "messages": [{"role": "user", "content": "Say: OK"}]},
-            timeout=30
-        )
-        elapsed = round(time.time() - t0, 1)
-        if resp.status_code == 200:
-            answer = resp.json()["choices"][0]["message"]["content"]
-            await status.edit_text(f"✅ Groq работает! ({elapsed}сек)
-Ответ: {answer}")
-        else:
-            await status.edit_text(f"❌ Groq ошибка {resp.status_code}:\n{resp.text[:200]}")
-    except requests.Timeout:
-        await status.edit_text("❌ Groq не ответил за 30 сек — проблема с сетью")
+        def call():
+            return groq_call([
+                {"role": "system", "content": "Опиши стиль сайта: цвета hex, шрифты, отступы, кнопки, настроение."},
+                {"role": "user", "content": [
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                    {"type": "text", "text": "Опиши визуальный стиль детально."}
+                ]}
+            ], model="meta-llama/llama-4-scout-17b-16e-instruct", max_tokens=800)
+        desc = await asyncio.wait_for(asyncio.to_thread(call), timeout=30)
+        save_style(desc)
+        await status.edit_text("✅ Стиль сохранён! Все сайты теперь в этом стиле.", reply_markup=main_menu())
     except Exception as e:
-        await status.edit_text(f"❌ Исключение: {type(e).__name__}: {str(e)[:200]}")
+        await status.edit_text(f"❌ Ошибка: {str(e)[:200]}", reply_markup=main_menu())
+
 
 async def error_handler(update, context):
-    import traceback
-    err = "".join(traceback.format_exception(type(context.error), context.error, context.error.__traceback__))
-    print(f"ERROR: {err}")
+    print(f"ERROR: {context.error}")
     if update and hasattr(update, "message") and update.message:
         try:
-            await update.message.reply_text(f"❌ Внутренняя ошибка:\n{str(context.error)[:200]}")
-        except:
-            pass
+            await update.message.reply_text(f"❌ Ошибка: {str(context.error)[:200]}", reply_markup=main_menu())
+        except: pass
+
 
 async def post_init(app):
     await app.bot.set_my_commands([
         ("start", "Главное меню"),
+        ("test",  "Проверить Groq API"),
     ])
 
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).post_init(post_init).build()
     app.add_error_handler(error_handler)
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("test", test_groq))
-    app.add_handler(CallbackQueryHandler(button_handler))
+    app.add_handler(CommandHandler("start", cmd_start))
+    app.add_handler(CommandHandler("test",  cmd_test))
+    app.add_handler(CallbackQueryHandler(btn))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     print("✅ Бот запущен!")
-    app.run_polling(drop_pending_updates=True, allowed_updates=Update.ALL_TYPES)
+    app.run_polling(drop_pending_updates=True)
