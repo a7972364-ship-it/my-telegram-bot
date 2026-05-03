@@ -67,6 +67,16 @@ def generate_site_files(user_text: str, image_b64: str | None = None) -> tuple[d
     return files, summary
 
 
+def disable_vercel_protection(project_id: str):
+    """Отключает Vercel Authentication на проекте."""
+    requests.patch(
+        f"https://api.vercel.com/v9/projects/{project_id}",
+        headers={"Authorization": f"Bearer {VERCEL_TOKEN}", "Content-Type": "application/json"},
+        data=json.dumps({"ssoProtection": None, "passwordProtection": None}),
+        timeout=15
+    )
+
+
 def deploy_to_vercel(files: dict[str, str], project_name: str) -> str:
     vercel_files = [
         {
@@ -76,22 +86,26 @@ def deploy_to_vercel(files: dict[str, str], project_name: str) -> str:
         }
         for name, content in files.items()
     ]
-    payload = {
-        "name": project_name,
-        "files": vercel_files,
-        "projectSettings": {"framework": None},
-        # Отключаем защиту — сайт публичный
-        "public": True
-    }
     resp = requests.post(
         "https://api.vercel.com/v13/deployments",
         headers={"Authorization": f"Bearer {VERCEL_TOKEN}", "Content-Type": "application/json"},
-        data=json.dumps(payload),
+        data=json.dumps({
+            "name": project_name,
+            "files": vercel_files,
+            "projectSettings": {"framework": None}
+        }),
         timeout=60
     )
     if resp.status_code not in (200, 201):
         raise RuntimeError(f"Vercel error {resp.status_code}: {resp.text[:300]}")
-    url = resp.json().get("url", "")
+
+    data       = resp.json()
+    url        = data.get("url", "")
+    project_id = data.get("projectId") or project_name
+
+    # Отключаем защиту сразу после деплоя
+    disable_vercel_protection(project_id)
+
     return ("https://" + url) if url and not url.startswith("http") else url
 
 
@@ -115,9 +129,7 @@ async def process_request(update: Update, user_text: str, image_b64: str | None 
             await status.edit_text("❌ Не удалось сгенерировать. Попробуй ещё раз.")
             return
 
-        file_list = ", ".join(files.keys())
-        await status.edit_text(f"🚀 Деплою на Vercel...")
-
+        await status.edit_text("🚀 Деплою на Vercel...")
         url = deploy_to_vercel(files, make_project_name(user_text or "site"))
 
         ref_note = "🎨 Референс использован\n" if image_b64 else ""
