@@ -11,7 +11,7 @@ Telegram Bot — генерирует сайты через Groq и деплои
     - Только фото:   [скриншот] — скопирует стиль
 """
 
-import json, base64, re, time, requests
+import os, json, base64, re, time, requests
 from groq import Groq
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
@@ -19,7 +19,7 @@ from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, fil
 # ─── Конфигурация ────────────────────────────────────────────────────────────
 TELEGRAM_TOKEN = "8651518107:AAFtxuF2KZDM4IeuGdf1bVb1_ZV01rcI5lk"
 GROQ_KEY       = "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"
-VERCEL_TOKEN   = "vcp_0RK0qObXsHx0QLrscLH0fAbpzJdfnxwkzCQLudCFy3na0zw2Qj29KfDY"
+VERCEL_TOKEN   = os.environ.get("VERCEL_TOKEN", "")
 MY_ID          = 311728841
 # ─────────────────────────────────────────────────────────────────────────────
 
