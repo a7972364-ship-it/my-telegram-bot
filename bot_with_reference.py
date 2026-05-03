@@ -138,12 +138,44 @@ def current_site():
 
 def parse_json(raw):
     raw = raw.strip()
+    # Remove markdown code blocks
     raw = re.sub(r"^```(?:json)?\s*", "", raw)
     raw = re.sub(r"\s*```$", "", raw)
-    # Find JSON object
+    raw = raw.strip()
+
+    # Find the outermost JSON object
     start = raw.find("{")
-    if start > 0: raw = raw[start:]
-    data = json.loads(raw)
+    if start == -1:
+        raise json.JSONDecodeError("No JSON object found", raw, 0)
+    
+    # Find matching closing brace
+    depth = 0
+    end = -1
+    in_str = False
+    escape = False
+    for i, ch in enumerate(raw[start:], start):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\" and in_str:
+            escape = True
+            continue
+        if ch == '"' and not escape:
+            in_str = not in_str
+            continue
+        if not in_str:
+            if ch == "{": depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+    
+    if end == -1:
+        raise json.JSONDecodeError("No closing brace", raw, 0)
+    
+    json_str = raw[start:end+1]
+    data = json.loads(json_str)
     return data.get("files", {}), data.get("summary", "Готово!")
 
 def deploy(files):
@@ -236,8 +268,10 @@ async def do_generate(status, name, brief_text, update=None):
         await status.edit_text("❌ ИИ не ответил (таймаут 65 сек). Попробуй ещё раз.", reply_markup=main_menu())
     except requests.HTTPError as e:
         await status.edit_text(f"❌ Groq HTTP ошибка: {e.response.status_code}\n{e.response.text[:150]}", reply_markup=main_menu())
-    except json.JSONDecodeError:
-        await status.edit_text("❌ ИИ вернул неверный формат. Попробуй ещё раз.", reply_markup=main_menu())
+    except json.JSONDecodeError as jde:
+        # Show first 200 chars of raw response for debugging
+        preview = raw[:200] if "raw" in dir() else "нет данных"
+        await status.edit_text(f"❌ Неверный формат JSON.\nПревью ответа: {preview}", reply_markup=main_menu())
     except Exception as e:
         await status.edit_text(f"❌ Ошибка: {type(e).__name__}: {str(e)[:200]}", reply_markup=main_menu())
     return None
