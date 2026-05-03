@@ -563,6 +563,42 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Чтобы сохранить стиль — нажми «Стиль по скриншоту» в меню /start", reply_markup=main_menu_keyboard())
 
 
+async def test_groq(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MY_ID:
+        return
+    status = await update.message.reply_text("🔍 Тестирую Groq API...")
+    try:
+        import time
+        t0 = time.time()
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+            json={"model": "llama-3.1-8b-instant", "max_tokens": 50,
+                  "messages": [{"role": "user", "content": "Say: OK"}]},
+            timeout=30
+        )
+        elapsed = round(time.time() - t0, 1)
+        if resp.status_code == 200:
+            answer = resp.json()["choices"][0]["message"]["content"]
+            await status.edit_text(f"✅ Groq работает! ({elapsed}сек)
+Ответ: {answer}")
+        else:
+            await status.edit_text(f"❌ Groq ошибка {resp.status_code}:\n{resp.text[:200]}")
+    except requests.Timeout:
+        await status.edit_text("❌ Groq не ответил за 30 сек — проблема с сетью")
+    except Exception as e:
+        await status.edit_text(f"❌ Исключение: {type(e).__name__}: {str(e)[:200]}")
+
+async def error_handler(update, context):
+    import traceback
+    err = "".join(traceback.format_exception(type(context.error), context.error, context.error.__traceback__))
+    print(f"ERROR: {err}")
+    if update and hasattr(update, "message") and update.message:
+        try:
+            await update.message.reply_text(f"❌ Внутренняя ошибка:\n{str(context.error)[:200]}")
+        except:
+            pass
+
 async def post_init(app):
     await app.bot.set_my_commands([
         ("start", "Главное меню"),
@@ -571,7 +607,9 @@ async def post_init(app):
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).post_init(post_init).build()
+    app.add_error_handler(error_handler)
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("test", test_groq))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
