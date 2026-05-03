@@ -1,4 +1,4 @@
-import os, json, base64, re, requests
+import os, json, base64, re, requests, asyncio
 from datetime import datetime
 from groq import Groq
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, ReplyKeyboardRemove
@@ -9,7 +9,7 @@ GROQ_KEY       = "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"
 VERCEL_TOKEN   = os.environ.get("VERCEL_TOKEN", "")
 MY_ID          = 311728841
 
-client = Groq(api_key=GROQ_KEY)
+client = Groq(api_key=GROQ_KEY, timeout=60.0)
 
 STYLE_FILE   = "/tmp/saved_style.txt"
 SITES_FILE   = "/tmp/all_sites.json"
@@ -436,16 +436,32 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             brief_text = build_brief(context.user_data["brief"])
             await status.edit_text("🤖 Groq пишет код... (~30 сек)")
-            r = client.chat.completions.create(
-                model="llama-3.3-70b-versatile", max_tokens=7000,
-                timeout=90,
-                messages=[{"role": "system", "content": build_prompt()}, {"role": "user", "content": brief_text}]
-            )
+
+            def call_groq():
+                return client.chat.completions.create(
+                    model="llama-3.3-70b-versatile", max_tokens=6000,
+                    messages=[{"role": "system", "content": build_prompt()}, {"role": "user", "content": brief_text}]
+                )
+
+            try:
+                r = await asyncio.wait_for(asyncio.to_thread(call_groq), timeout=80)
+            except asyncio.TimeoutError:
+                await status.edit_text("❌ Groq не ответил за 80 сек. Попробуй ещё раз.", reply_markup=main_menu_keyboard())
+                return
+
             raw = r.choices[0].message.content
-            files, summary = parse_response(raw)
+            await status.edit_text("🔧 Обрабатываю код...")
+
+            try:
+                files, summary = parse_response(raw)
+            except Exception as parse_err:
+                await status.edit_text(f"❌ Ошибка парсинга: {str(parse_err)[:150]}\n\nПопробуй ещё раз.", reply_markup=main_menu_keyboard())
+                return
+
             if not files:
                 await status.edit_text("❌ Groq не вернул файлы. Попробуй ещё раз.", reply_markup=main_menu_keyboard())
                 return
+
             await status.edit_text("🚀 Деплою на Vercel...")
             url = deploy(files)
             name = context.user_data["brief"].get("name", "Сайт")
@@ -454,10 +470,8 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             qr_url = get_qr_url(url)
             await status.edit_text(f"✅ Готово!\n\n🌐 {url}\n\n📝 {summary}", reply_markup=main_menu_keyboard())
             await update.message.reply_photo(photo=qr_url, caption="📱 QR-код твоего сайта")
-        except json.JSONDecodeError as e:
-            await status.edit_text(f"❌ Groq вернул неверный формат. Попробуй ещё раз.", reply_markup=main_menu_keyboard())
         except Exception as e:
-            await status.edit_text(f"❌ Ошибка: {str(e)[:200]}", reply_markup=main_menu_keyboard())
+            await status.edit_text(f"❌ Ошибка: {str(e)[:300]}", reply_markup=main_menu_keyboard())
         return
 
     # Действия edit/addblock
