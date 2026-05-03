@@ -61,56 +61,22 @@ TEMPLATES = {
     },
 }
 
-BASE_PROMPT = """Ты — топовый веб-дизайнер. Создавай визуально потрясающие сайты.
+BASE_PROMPT = """Ты веб-дизайнер. Ответ ТОЛЬКО в JSON:
+{"files":{"index.html":"код"},"summary":"1-2 предложения"}
 
-Формат ответа — ТОЛЬКО валидный JSON:
-{
-  "files": { "index.html": "полный html код" },
-  "summary": "1-2 предложения"
-}
-
-КРИТИЧЕСКИ ВАЖНО:
-- ВЕСЬ CSS внутри <style> в <head>
-- ВЕСЬ JS внутри <script> перед </body>
-- Только CDN библиотеки через внешние теги
-
-ПОДКЛЮЧЕНИЯ:
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+ВЕСЬ CSS в <style>, ВЕСЬ JS в <script>. CDN:
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
 
-БАЗОВЫЕ СТИЛИ:
-* { margin:0; padding:0; box-sizing:border-box; }
-html,body { background:#0a0a0a; color:#fff; font-family:'Inter',sans-serif; scroll-behavior:smooth; }
+СТИЛИ: *{margin:0;padding:0;box-sizing:border-box} body{background:#0a0a0a;color:#fff;font-family:Inter,sans-serif}
+АДАПТИВ: @media(max-width:768px){.grid-3,.grid-2{grid-template-columns:1fr} section{padding:60px 20px} nav .links{display:none}}
 
-АДАПТИВНОСТЬ (обязательно):
-@media (max-width: 768px) {
-  nav { padding:16px 20px; }
-  nav .nav-links { display:none; }
-  .hero h1 { font-size:clamp(36px,10vw,64px); }
-  .grid-3,.grid-2 { grid-template-columns:1fr; }
-  section { padding:60px 20px; }
-  .btn-group { flex-direction:column; align-items:stretch; }
-}
-
-КАРТИНКИ: Unsplash по теме: https://images.unsplash.com/photo-[ID]?w=1200&q=80&auto=format&fit=crop
-
-СТРУКТУРА:
-1. Навбар fixed: backdrop-filter:blur(20px); якоря на секции
-2. Hero 100vh: blob анимация, gradient заголовок, 2 кнопки
-3. Бегущая строка (@keyframes marquee)
-4. Преимущества: сетка 3 карточки
-5. Услуги с ценами
-6. Галерея с Unsplash фото
-7. CTA с Telegram кнопкой
-8. Футер
-
-РАБОЧИЕ КНОПКИ:
-- Навигация: <a href="#section">
-- Telegram: <a href="https://t.me/USERNAME" target="_blank">
-- Email: <a href="mailto:email">
-- Телефон: <a href="tel:+7XXXXXXXXXX">
-
-АНИМАЦИИ: blob, marquee, IntersectionObserver fade-in"""
+СТРУКТУРА: навбар fixed blur(20px) → hero 100vh с blob и gradient заголовком → бегущая строка → 3 карточки преимуществ → услуги → CTA → футер
+BLOB: position:absolute;width:500px;height:500px;border-radius:50%;filter:blur(100px);opacity:0.15;animation:blob 7s infinite
+@keyframes blob{0%,100%{transform:translate(-50%,-50%)scale(1)}50%{transform:translate(-40%,-60%)scale(1.2)}}
+КНОПКИ: href="https://t.me/USERNAME", href="tel:+7...", href="mailto:...", href="#section"
+КАРТИНКИ: https://images.unsplash.com/photo-[релевантный ID]?w=1200&q=80
+FADE-IN: IntersectionObserver на секции"""
 
 SEO_PROMPT = """Добавь SEO оптимизацию в HTML и верни ТОЛЬКО JSON:
 {
@@ -469,26 +435,29 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = await update.message.reply_text("🤖 Создаю сайт...", reply_markup=ReplyKeyboardRemove())
         try:
             brief_text = build_brief(context.user_data["brief"])
+            await status.edit_text("🤖 Groq пишет код... (~30 сек)")
             r = client.chat.completions.create(
-                model="llama-3.3-70b-versatile", max_tokens=8000,
+                model="llama-3.3-70b-versatile", max_tokens=7000,
+                timeout=90,
                 messages=[{"role": "system", "content": build_prompt()}, {"role": "user", "content": brief_text}]
             )
-            files, summary = parse_response(r.choices[0].message.content)
+            raw = r.choices[0].message.content
+            files, summary = parse_response(raw)
             if not files:
-                await status.edit_text("❌ Не удалось создать. Попробуй снова.")
+                await status.edit_text("❌ Groq не вернул файлы. Попробуй ещё раз.", reply_markup=main_menu_keyboard())
                 return
             await status.edit_text("🚀 Деплою на Vercel...")
             url = deploy(files)
             name = context.user_data["brief"].get("name", "Сайт")
             push_history(files, url, name)
             save_site_to_list(name, url)
-
-            # QR-код сразу после создания
             qr_url = get_qr_url(url)
             await status.edit_text(f"✅ Готово!\n\n🌐 {url}\n\n📝 {summary}", reply_markup=main_menu_keyboard())
             await update.message.reply_photo(photo=qr_url, caption="📱 QR-код твоего сайта")
+        except json.JSONDecodeError as e:
+            await status.edit_text(f"❌ Groq вернул неверный формат. Попробуй ещё раз.", reply_markup=main_menu_keyboard())
         except Exception as e:
-            await status.edit_text(f"❌ Ошибка: {e}", reply_markup=main_menu_keyboard())
+            await status.edit_text(f"❌ Ошибка: {str(e)[:200]}", reply_markup=main_menu_keyboard())
         return
 
     # Действия edit/addblock
