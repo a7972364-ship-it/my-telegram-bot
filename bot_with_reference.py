@@ -23,16 +23,13 @@ TEMPLATES = {
     "doctor":    {"name": "Врач / Клиника",      "photo": "https://images.unsplash.com/photo-1576091160399-112ba8d25d1d?w=800&q=80", "desc": "Частная медицинская практика.", "services": "Консультации, Диагностика, Запись онлайн", "colors": "тёмно-синий профессиональный"},
 }
 
-SYSTEM_PROMPT = """Ты веб-дизайнер. Ответ ТОЛЬКО валидный JSON без markdown:
-{"files":{"index.html":"код"},"summary":"1-2 предложения"}
-
-ВЕСЬ CSS в <style>, ВЕСЬ JS в <script>. CDN разрешены.
-Подключи: Inter шрифт от Google Fonts, GSAP от cdnjs.
-Стили: тёмный фон #0a0a0a, белый текст, градиентные акценты.
-Адаптив обязателен: @media(max-width:768px).
-Структура: навбар→hero(100vh, blob, gradient заголовок)→преимущества→услуги→CTA→футер.
-Кнопки рабочие: tel:, mailto:, t.me/, #якоря.
-Картинки: images.unsplash.com по теме."""
+SYSTEM_PROMPT = """Веб-дизайнер. JSON только:
+{"files":{"index.html":"html"},"summary":"описание"}
+CSS в <style>, JS в <script>. Inter+GSAP CDN.
+Фон #0a0a0a, белый текст, градиент акцент.
+Адаптив @media(max-width:768px).
+Навбар→hero 100vh с blob→преимущества→услуги→CTA→футер.
+Кнопки: tel: mailto: t.me/ #якоря. Unsplash фото."""
 
 EDIT_PROMPT = """Внеси изменения и верни ТОЛЬКО JSON без markdown:
 {"files":{"index.html":"полный html"},"summary":"что изменил"}
@@ -49,7 +46,7 @@ SEO_PROMPT = """Добавь SEO теги и верни ТОЛЬКО JSON без
 
 # ─── Groq API ─────────────────────────────────────────────────────────────────
 
-def groq_call(messages: list, model="llama-3.1-8b-instant", max_tokens=6000) -> str:
+def groq_call(messages: list, model="llama-3.3-70b-versatile", max_tokens=6000) -> str:
     resp = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
@@ -95,7 +92,7 @@ def groq_call_with_html(system_prompt: str, html: str, instruction: str) -> str:
             return groq_call([
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_content2}
-            ], model="llama-3.1-8b-instant", max_tokens=6000)
+            ], model="llama-3.3-70b-versatile", max_tokens=6000)
         raise
 
 
@@ -299,7 +296,7 @@ async def cmd_test(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         t0 = time.time()
         answer = await asyncio.wait_for(
-            asyncio.to_thread(groq_call, [{"role": "user", "content": "Reply with just: WORKS"}], "llama-3.1-8b-instant", 20),
+            asyncio.to_thread(groq_call, [{"role": "user", "content": "Reply with just: WORKS"}], "llama-3.3-70b-versatile", 20),
             timeout=30
         )
         elapsed = round(time.time() - t0, 1)
