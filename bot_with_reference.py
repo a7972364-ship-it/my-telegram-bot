@@ -56,8 +56,47 @@ def groq_call(messages: list, model="llama-3.1-8b-instant", max_tokens=6000) -> 
         json={"model": model, "max_tokens": max_tokens, "messages": messages},
         timeout=55
     )
+    if resp.status_code == 413:
+        # Try with smaller model and truncated content
+        raise requests.HTTPError(response=resp)
     resp.raise_for_status()
     return resp.json()["choices"][0]["message"]["content"]
+
+def truncate_html(html: str, max_chars=12000) -> str:
+    """Truncate HTML keeping structure intact."""
+    if len(html) <= max_chars:
+        return html
+    # Keep head and first/last parts
+    head_end = html.find("</head>")
+    if head_end > 0:
+        head = html[:head_end+7]
+        body = html[head_end+7:]
+        # Keep first 8000 and last 2000 chars of body
+        if len(body) > 10000:
+            body = body[:8000] + "\n<!-- ... truncated ... -->\n" + body[-2000:]
+        return head + body
+    return html[:max_chars]
+
+def groq_call_with_html(system_prompt: str, html: str, instruction: str) -> str:
+    """Call Groq for edit operations with automatic model/size fallback."""
+    # Try with llama-3.3-70b-versatile first (128k context)
+    truncated = truncate_html(html, 20000)
+    user_content = f"HTML:\n{truncated}\n\n{instruction}"
+    try:
+        return groq_call([
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content}
+        ], model="llama-3.3-70b-versatile", max_tokens=6000)
+    except requests.HTTPError as e:
+        if e.response.status_code == 413:
+            # Try with more truncated HTML
+            truncated2 = truncate_html(html, 8000)
+            user_content2 = f"HTML:\n{truncated2}\n\n{instruction}"
+            return groq_call([
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_content2}
+            ], model="llama-3.1-8b-instant", max_tokens=6000)
+        raise
 
 
 # ─── Утилиты ──────────────────────────────────────────────────────────────────
@@ -286,7 +325,7 @@ async def btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             html = site["files"].get("index.html", "")
             def call():
-                return groq_call([{"role": "system", "content": SEO_PROMPT}, {"role": "user", "content": f"HTML:\n{html}"}])
+                return groq_call_with_html(SEO_PROMPT, html, "Добавь SEO оптимизацию.")
             raw = await asyncio.wait_for(asyncio.to_thread(call), timeout=65)
             files, summary = parse_json(raw)
             url = await asyncio.to_thread(deploy, files)
@@ -399,10 +438,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             html = site["files"].get("index.html","")
             def call():
-                return groq_call([
-                    {"role": "system", "content": EDIT_PROMPT},
-                    {"role": "user", "content": f"HTML:\n{html}\n\nЧТО ИЗМЕНИТЬ: {text}"}
-                ])
+                return groq_call_with_html(EDIT_PROMPT, html, f"ЧТО ИЗМЕНИТЬ: {text}")
             raw = await asyncio.wait_for(asyncio.to_thread(call), timeout=65)
             files, summary = parse_json(raw)
             url = await asyncio.to_thread(deploy, files)
@@ -423,10 +459,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             html = site["files"].get("index.html","")
             def call():
-                return groq_call([
-                    {"role": "system", "content": ADD_PROMPT},
-                    {"role": "user", "content": f"HTML:\n{html}\n\nДОБАВИТЬ РАЗДЕЛ: {text}"}
-                ])
+                return groq_call_with_html(ADD_PROMPT, html, f"ДОБАВИТЬ РАЗДЕЛ: {text}")
             raw = await asyncio.wait_for(asyncio.to_thread(call), timeout=65)
             files, summary = parse_json(raw)
             url = await asyncio.to_thread(deploy, files)
