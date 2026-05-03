@@ -174,17 +174,20 @@ def get_qr_url(site_url: str) -> str:
     return f"https://api.qrserver.com/v1/create-qr-code/?size=400x400&data={site_url}&bgcolor=0a0a0a&color=ffffff&margin=20"
 
 def analyze_style(b64: str) -> str:
-    r = client.chat.completions.create(
-        model="meta-llama/llama-4-scout-17b-16e-instruct", max_tokens=1000,
-        messages=[
-            {"role": "system", "content": "Опиши визуальный стиль сайта: цвета (hex), шрифты, отступы, кнопки, карточки, анимации."},
-            {"role": "user", "content": [
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                {"type": "text", "text": "Опиши стиль детально."}
-            ]}
-        ]
-    )
-    return r.choices[0].message.content.strip()
+    raw_style = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+        json={"model": "meta-llama/llama-4-scout-17b-16e-instruct", "max_tokens": 1000,
+              "messages": [
+                  {"role": "system", "content": "Опиши визуальный стиль сайта: цвета (hex), шрифты, отступы, кнопки, карточки, анимации."},
+                  {"role": "user", "content": [
+                      {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                      {"type": "text", "text": "Опиши стиль детально."}
+                  ]}
+              ]},
+        timeout=60
+    ).json()["choices"][0]["message"]["content"]
+    return raw_style.strip()
 
 def build_brief(data: dict) -> str:
     template_context = ""
@@ -300,11 +303,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = await query.edit_message_text("🔍 Добавляю SEO оптимизацию...")
         try:
             html = site["files"].get("index.html", "")
-            r = client.chat.completions.create(
-                model="llama-3.3-70b-versatile", max_tokens=8000,
-                messages=[{"role": "system", "content": SEO_PROMPT}, {"role": "user", "content": f"HTML:\n{html}"}]
-            )
-            files, summary = parse_response(r.choices[0].message.content)
+            raw_seo = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+                json={"model": "llama-3.1-8b-instant", "max_tokens": 6000,
+                      "messages": [{"role": "system", "content": SEO_PROMPT}, {"role": "user", "content": f"HTML:\n{html}"}]},
+                timeout=60
+            ).json()["choices"][0]["message"]["content"]
+            files, summary = parse_response(raw_seo)
             url = deploy(files)
             push_history(files, url, site.get("name", ""))
             save_site_to_list(site.get("name", "сайт"), url)
@@ -438,18 +444,24 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status.edit_text("🤖 Groq пишет код... (~30 сек)")
 
             def call_groq():
-                return client.chat.completions.create(
-                    model="llama-3.3-70b-versatile", max_tokens=6000,
-                    messages=[{"role": "system", "content": build_prompt()}, {"role": "user", "content": brief_text}]
+                resp = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+                    json={"model": "llama-3.1-8b-instant", "max_tokens": 6000,
+                          "messages": [{"role": "system", "content": build_prompt()}, {"role": "user", "content": brief_text}]},
+                    timeout=60
                 )
+                resp.raise_for_status()
+                return resp.json()["choices"][0]["message"]["content"]
 
             try:
-                r = await asyncio.wait_for(asyncio.to_thread(call_groq), timeout=80)
+                raw = await asyncio.wait_for(asyncio.to_thread(call_groq), timeout=70)
             except asyncio.TimeoutError:
-                await status.edit_text("❌ Groq не ответил за 80 сек. Попробуй ещё раз.", reply_markup=main_menu_keyboard())
+                await status.edit_text("❌ Groq не ответил за 70 сек. Попробуй ещё раз.", reply_markup=main_menu_keyboard())
                 return
-
-            raw = r.choices[0].message.content
+            except requests.RequestException as req_err:
+                await status.edit_text(f"❌ Сетевая ошибка: {str(req_err)[:150]}", reply_markup=main_menu_keyboard())
+                return
             await status.edit_text("🔧 Обрабатываю код...")
 
             try:
@@ -484,11 +496,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = await update.message.reply_text("✏️ Вношу изменения...")
         try:
             html = site["files"].get("index.html", "")
-            r = client.chat.completions.create(
-                model="llama-3.3-70b-versatile", max_tokens=8000,
-                messages=[{"role": "system", "content": EDIT_PROMPT}, {"role": "user", "content": f"HTML:\n{html}\n\nЧТО ИЗМЕНИТЬ: {text}"}]
-            )
-            files, summary = parse_response(r.choices[0].message.content)
+            raw_edit = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+                json={"model": "llama-3.1-8b-instant", "max_tokens": 6000,
+                      "messages": [{"role": "system", "content": EDIT_PROMPT}, {"role": "user", "content": f"HTML:\n{html}\n\nЧТО ИЗМЕНИТЬ: {text}"}]},
+                timeout=60
+            ).json()["choices"][0]["message"]["content"]
+            files, summary = parse_response(raw_edit)
             url = deploy(files)
             push_history(files, url, site.get("name", ""))
             save_site_to_list(site.get("name", ""), url)
@@ -506,11 +521,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = await update.message.reply_text("➕ Добавляю раздел...")
         try:
             html = site["files"].get("index.html", "")
-            r = client.chat.completions.create(
-                model="llama-3.3-70b-versatile", max_tokens=8000,
-                messages=[{"role": "system", "content": ADDBLOCK_PROMPT}, {"role": "user", "content": f"HTML:\n{html}\n\nДОБАВИТЬ: {text}"}]
-            )
-            files, summary = parse_response(r.choices[0].message.content)
+            raw_add = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+                json={"model": "llama-3.1-8b-instant", "max_tokens": 6000,
+                      "messages": [{"role": "system", "content": ADDBLOCK_PROMPT}, {"role": "user", "content": f"HTML:\n{html}\n\nДОБАВИТЬ: {text}"}]},
+                timeout=60
+            ).json()["choices"][0]["message"]["content"]
+            files, summary = parse_response(raw_add)
             url = deploy(files)
             push_history(files, url, site.get("name", ""))
             save_site_to_list(site.get("name", ""), url)
