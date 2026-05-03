@@ -112,7 +112,7 @@ def deploy_to_vercel(files: dict[str, str], project_name: str) -> str:
 def make_project_name(text: str) -> str:
     slug   = re.sub(r"[^a-z0-9]+", "-", text.lower())[:28].strip("-")
     suffix = int(time.time()) % 10000
-    return f"tg-{slug}-{suffix}" if slug else f"tg-site-{suffix}"
+    return "my-telegram-sites"
 
 
 async def process_request(update: Update, user_text: str, image_b64: str | None = None):
