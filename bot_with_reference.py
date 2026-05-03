@@ -47,17 +47,22 @@ SEO_PROMPT = """Добавь SEO теги и верни ТОЛЬКО JSON без
 # ─── Groq API ─────────────────────────────────────────────────────────────────
 
 def groq_call(messages: list, model="llama-3.3-70b-versatile", max_tokens=6000) -> str:
-    resp = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
-        json={"model": model, "max_tokens": max_tokens, "messages": messages},
-        timeout=55
-    )
-    if resp.status_code == 413:
-        # Try with smaller model and truncated content
-        raise requests.HTTPError(response=resp)
-    resp.raise_for_status()
-    return resp.json()["choices"][0]["message"]["content"]
+    for attempt in range(3):
+        resp = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={"Authorization": f"Bearer {GROQ_KEY}", "Content-Type": "application/json"},
+            json={"model": model, "max_tokens": max_tokens, "messages": messages},
+            timeout=55
+        )
+        if resp.status_code == 429:
+            wait = int(resp.headers.get("retry-after", 15))
+            time.sleep(min(wait, 30))
+            continue
+        if resp.status_code == 413:
+            raise requests.HTTPError(response=resp)
+        resp.raise_for_status()
+        return resp.json()["choices"][0]["message"]["content"]
+    raise RuntimeError("Groq: слишком много запросов. Подожди минуту.")
 
 def truncate_html(html: str, max_chars=12000) -> str:
     """Truncate HTML keeping structure intact."""
