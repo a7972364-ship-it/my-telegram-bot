@@ -1,26 +1,12 @@
-"""
-Telegram Bot — генерирует сайты через Gemini и деплоит на Vercel.
-Поддерживает референсы: просто кинь ссылку на сайт который нравится.
-
-Установка:
-    pip install google-generativeai python-telegram-bot requests
-
-Примеры использования в Telegram:
-    "Сделай лендинг для кофейни"
-    "https://stripe.com  —  сделай похожий стиль, но для портфолио"
-    "https://linear.app"  (без описания — скопирует общий стиль)
-"""
-
 import os, json, base64, re, time, requests
 import google.generativeai as genai
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, CommandHandler, filters, ContextTypes
 
-# ─── Конфигурация ────────────────────────────────────────────────────────────
 TELEGRAM_TOKEN = "8651518107:AAFtxuF2KZDM4IeuGdf1bVb1_ZV01rcI5lk"
 GEMINI_KEY     = "AIzaSyBvlgIea9aDUEqg77tEqzMVQtbZNkHwOk0"
 VERCEL_TOKEN   = "vcp_0RK0qObXsHx0QLrscLH0fAbpzJdfnxwkzCQLudCFy3na0zw2Qj29KfDY"
-# ─────────────────────────────────────────────────────────────────────────────
+MY_ID          = 311728841  # только этот пользователь может использовать бота
 
 genai.configure(api_key=GEMINI_KEY)
 
@@ -66,8 +52,6 @@ SYSTEM_WITH_REF = SYSTEM_BASE + """
 
 
 def get_screenshot_bytes(url: str) -> bytes | None:
-    """Делает скриншот сайта через бесплатный API (без ключа)."""
-    # thum.io — полностью бесплатный, без регистрации
     screenshot_url = f"https://image.thum.io/get/width/1280/crop/900/{url}"
     try:
         r = requests.get(screenshot_url, timeout=20)
@@ -83,9 +67,7 @@ def extract_urls(text: str) -> list[str]:
 
 
 def build_prompt(user_text: str, has_ref: bool) -> str:
-    urls = extract_urls(user_text)
     clean_text = URL_REGEX.sub("", user_text).strip(" —-\n")
-
     if has_ref and not clean_text:
         return "Проанализируй стиль на скриншоте и создай новый сайт в таком же стиле. Придумай подходящий контент."
     elif has_ref and clean_text:
@@ -95,7 +77,6 @@ def build_prompt(user_text: str, has_ref: bool) -> str:
 
 
 def generate_site_files(user_text: str, screenshot: bytes | None = None) -> tuple[dict[str, str], str]:
-    """Запускает agentic loop с Gemini, собирает файлы."""
     has_ref = screenshot is not None
     system  = SYSTEM_WITH_REF if has_ref else SYSTEM_BASE
 
@@ -105,22 +86,13 @@ def generate_site_files(user_text: str, screenshot: bytes | None = None) -> tupl
         tools=[CREATE_FILE_TOOL]
     )
 
-    prompt_text = build_prompt(user_text, has_ref)
-
-    # Формируем первое сообщение — текст + скриншот (если есть)
-    if screenshot:
-        first_message = [
-            {"mime_type": "image/jpeg", "data": screenshot},
-            prompt_text
-        ]
-    else:
-        first_message = prompt_text
+    prompt_text   = build_prompt(user_text, has_ref)
+    first_message = [{"mime_type": "image/jpeg", "data": screenshot}, prompt_text] if screenshot else prompt_text
 
     files: dict[str, str] = {}
     chat     = model.start_chat()
     response = chat.send_message(first_message)
 
-    # Agentic loop
     while True:
         tool_responses = []
         text_parts     = []
@@ -178,9 +150,10 @@ def make_project_name(text: str) -> str:
     return f"tg-{slug}-{suffix}" if slug else f"tg-site-{suffix}"
 
 
-# ─── Telegram handlers ───────────────────────────────────────────────────────
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MY_ID:
+        await update.message.reply_text("⛔ Нет доступа.")
+        return
     await update.message.reply_text(
         "👋 Привет! Я создаю сайты и деплою их на Vercel.\n\n"
         "Как использовать:\n"
@@ -192,19 +165,20 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != MY_ID:
+        await update.message.reply_text("⛔ Нет доступа.")
+        return
+
     user_text = update.message.text.strip()
     if not user_text:
         return
 
     urls       = extract_urls(user_text)
-    has_ref    = bool(urls)
     screenshot = None
-
-    status = await update.message.reply_text("⏳ Начинаю...")
+    status     = await update.message.reply_text("⏳ Начинаю...")
 
     try:
-        # Если есть URL — делаем скриншот
-        if has_ref:
+        if urls:
             await status.edit_text(f"📸 Делаю скриншот {urls[0]}...")
             screenshot = get_screenshot_bytes(urls[0])
             if not screenshot:
@@ -222,7 +196,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         url = deploy_to_vercel(files, make_project_name(user_text))
 
-        ref_note = f"🎨 Референс: {urls[0]}\n" if has_ref and screenshot else ""
+        ref_note = f"🎨 Референс: {urls[0]}\n" if urls and screenshot else ""
         await status.edit_text(
             f"✅ Готово!\n\n"
             f"🌐 {url}\n\n"
@@ -236,11 +210,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         raise
 
 
-# ─── Запуск ──────────────────────────────────────────────────────────────────
-
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("✅ Бот запущен! Пиши в Telegram.")
+    print("✅ Бот запущен! Только для пользователя", MY_ID)
     app.run_polling()
