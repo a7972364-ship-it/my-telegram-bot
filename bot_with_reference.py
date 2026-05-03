@@ -243,8 +243,9 @@ COLORS_KB = ReplyKeyboardMarkup([
 ], one_time_keyboard=True, resize_keyboard=True)
 
 
-async def do_generate(status, name, brief_text, update=None):
-    """Вызывает Groq и деплоит. Возвращает url или None."""
+async def do_generate(status, name, brief_text, reply_to=None):
+    """Вызывает Groq и деплоит. reply_to — объект message для отправки QR."""
+    raw = None
     try:
         def call():
             return groq_call([
@@ -261,17 +262,19 @@ async def do_generate(status, name, brief_text, update=None):
         push_history(files, url, name)
         save_site(name, url)
         await status.edit_text(f"✅ Готово!\n\n🌐 {url}\n\n📝 {summary}", reply_markup=main_menu())
-        if update:
-            await update.message.reply_photo(photo=qr(url), caption="📱 QR-код твоего сайта")
+        if reply_to:
+            try:
+                await reply_to.reply_photo(photo=qr(url), caption="📱 QR-код твоего сайта")
+            except Exception:
+                pass  # QR не критичен
         return url
     except asyncio.TimeoutError:
         await status.edit_text("❌ ИИ не ответил (таймаут 65 сек). Попробуй ещё раз.", reply_markup=main_menu())
     except requests.HTTPError as e:
         await status.edit_text(f"❌ Groq HTTP ошибка: {e.response.status_code}\n{e.response.text[:150]}", reply_markup=main_menu())
-    except json.JSONDecodeError as jde:
-        # Show first 200 chars of raw response for debugging
-        preview = raw[:200] if "raw" in dir() else "нет данных"
-        await status.edit_text(f"❌ Неверный формат JSON.\nПревью ответа: {preview}", reply_markup=main_menu())
+    except json.JSONDecodeError:
+        preview = raw[:300] if raw else "нет данных"
+        await status.edit_text(f"❌ Неверный формат JSON.\nОтвет ИИ: {preview}", reply_markup=main_menu())
     except Exception as e:
         await status.edit_text(f"❌ Ошибка: {type(e).__name__}: {str(e)[:200]}", reply_markup=main_menu())
     return None
@@ -418,7 +421,7 @@ async def btn(update: Update, context: ContextTypes.DEFAULT_TYPE):
                       f"Не оставляй заглушки — используй реальные данные везде.")
         context.user_data["state"] = None
         msg = await q.edit_message_text("🤖 Генерирую сайт (~20 сек)...")
-        await do_generate(msg, name, brief_text, update)
+        await do_generate(msg, name, brief_text, q.message)
 
     elif d == "confirm_no":
         context.user_data.update({"state": "new_q1", "brief": {}})
