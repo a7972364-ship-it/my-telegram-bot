@@ -1,3 +1,3 @@
-google-generativeai
+groq
 python-telegram-bot
 requests
